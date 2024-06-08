@@ -16,5 +16,15 @@
   ],
   "peerDependencies": {
     "koishi": "^4.17.6"
+  },
+  "koishi": {
+    "service": {
+      "required": [
+        "cron",
+        "database",
+        "idconverter",
+        "monetary"
+      ]
+    }
   }
 }
