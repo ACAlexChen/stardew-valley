@@ -1,0 +1,48 @@
+{
+    "name": "Stardew_Valley",
+    "id": 0,
+    "description": "koishi星露谷物语插件主要内容文件",
+    "main": [
+        {
+            "name": "土豆",
+            "id": 0,
+            "description": "土豆作物",
+            "main": {
+                "type": "crop",
+                "main": {
+                    "level": 0,
+                    "growthTime": 7200000,
+                    "harvestOutput": [
+                        {
+                            "id": "0:0",
+                            "number": 2
+                        }
+                    ]
+                }
+            },
+            "price": {
+                "can": true,
+                "sell": 10,
+                "buy": 10
+            }
+        },
+        {
+            "name": "普通农场",
+            "id": 1,
+            "description": "非常tm普通的农场",
+            "main": {
+                "type": "building",
+                "main": {
+                    "type": "farm",
+                    "level": 0,
+                    "max": 10
+                }
+            },
+            "price": {
+                "can": true,
+                "sell": 100,
+                "buy": 100
+            }
+        }
+    ]
+}
