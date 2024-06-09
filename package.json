@@ -1,12 +1,13 @@
 {
   "name": "koishi-plugin-stardew-valley",
   "description": "星露谷物语，启动！",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
     "lib",
-    "dist"
+    "dist",
+    "src"
   ],
   "license": "MIT",
   "keywords": [
@@ -25,6 +26,15 @@
         "idconverter",
         "monetary"
       ]
-    }
+    },
+    "browser": true
+  },
+  "homepage": "https://forum.koishi.xyz/t/topic/8130",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ACAlexChen/stardew-valley.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ACAlexChen/stardew-valley/issues"
   }
 }

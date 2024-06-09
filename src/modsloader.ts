@@ -2,20 +2,21 @@ export interface mods {
   main: mod[]
 }
 
-interface mod {
+export interface mod {
   name: string
+  version: string
   id: number
   description: string
   main: item[]
 }
 
-interface item {
+export interface item {
   name: string
   id: number
   description: string
   main: {
-    type: 'crop' | 'building'
-    main: crop | building
+    type: 'crop' | 'building' | 'output'
+    main?: crop | building
   }
   price: {
     can: boolean
@@ -28,9 +29,15 @@ export interface crop {
   level: number
   growthTime: number
   harvestOutput: {
-    id: string
-    number: number
-  }[]
+    max: number
+    min: number
+    output: {
+      id: string
+      max: number
+      min: number
+      probability: number
+    }[]
+  }
 }
 
 export interface building {
@@ -41,19 +48,24 @@ export interface building {
 
 
 
+
 import * as fs from 'fs'
 import * as path from 'path'
 const main = require('./main.json') as mod
+const version = require('../package.json').version as string
 
 
 
-
-function loadMods(filepath : string, mods: mods): mods{
+function loadMods(filepath : string, mods: mods){
   if (path.extname(filepath) === '.json'){
     const data = fs.readFileSync(filepath, 'utf-8')
     const mod = JSON.parse(data) as mod
-    mods.main.push(mod)
-    return mods
+    if (mod.version === version){
+      mods.main.push(mod)
+      return
+    } else {
+      return
+    }
   }
 }
 

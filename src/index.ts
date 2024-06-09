@@ -20,7 +20,7 @@ export const inject = {
 
 export interface Config {}
 
-export const Config: Schema<Config> = Schema.object({})
+export const Config: Schema<Config> = Schema.intersect([]) as Schema<Config>
 
 declare module 'koishi' {
   interface Tables {
@@ -30,8 +30,12 @@ declare module 'koishi' {
   namespace Tables {
     interface stardew_valley {
       id: number
-      item: string[]
-      building: string[]
+      item: {
+        main: stardew_valley_item[]
+      }
+      building: {
+        main: stardew_valley_item[]
+      }
     }
     interface stardew_valley_crop {
       id: number
@@ -42,22 +46,9 @@ declare module 'koishi' {
   }
 }
 
-function ListTOString(List: string[]){
-  let returnARR = []
-  let currentCount = 1
-  for (let i = 0; i < List.length; i++){
-    if (List[i] === List[i+1]){
-      currentCount++
-    } else {
-      if (currentCount > 1){
-        returnARR.push(List[i] + 'x' + currentCount)
-      } else {
-        returnARR.push(List[i])
-      }
-      currentCount = 1
-    }
-  }
-  return returnARR.join('、')
+interface stardew_valley_item {
+  itemId?: string
+  number?: number
 }
 
 
@@ -66,15 +57,15 @@ function ListTOString(List: string[]){
 
 export function apply(ctx: Context, cfg: Config) {
 
-  ctx.model.extend('stardew_valley', {
+  ctx.model.extend('stardew_valley', { // 物品表
     id: 'unsigned',
-    item: 'list',
-    building: 'list'
+    item: 'json',
+    building: 'json'
   },{
     primary: ['id'],
     autoInc: false
   })
-  ctx.model.extend('stardew_valley_crop',{
+  ctx.model.extend('stardew_valley_crop',{ // 作物表
     id: 'unsigned',
     owner_id: 'unsigned',
     crop_id: 'string',
@@ -84,7 +75,7 @@ export function apply(ctx: Context, cfg: Config) {
     autoInc: true
   })
 
-  const modpath = path.resolve(__dirname,'../../../data')
+  const modpath = path.resolve(__dirname,'../../../data') // mod加载系统
   if (!fs.existsSync(`${modpath}/mods`)){
     fs.mkdirSync(`${modpath}/mods`)
   }
@@ -98,290 +89,294 @@ export function apply(ctx: Context, cfg: Config) {
     var mods = loadmods.message as mods
   }
 
-  ctx.command('stardew-valley.购买 [inputitem] [number]')
-  .action(async ({session}, inputitem, number) => {
-    let buy_number
-    if (number){
-      buy_number = parseInt(number)
-    } else {
-      buy_number = 1
+  function ListTOString(List: string[]){ // [a,b,c,d,e] -> "a、b、c、d、e"
+    let returnARR = []
+    let currentCount = 1
+    for (let i = 0; i < List.length; i++){
+      if (List[i] === List[i+1]){
+        currentCount++
+      } else {
+        if (currentCount > 1){
+          returnARR.push(List[i] + 'x' + currentCount)
+        } else {
+          returnARR.push(List[i])
+        }
+        currentCount = 1
+      }
     }
-    if (!inputitem){
-      return '请输入要购买的物品名称'
+    return returnARR.join('、')
+  }
+  
+  function universalIdTOmodId(universalId: string){ // "1:2" -> {modId: 1, itemId: 2}
+    let modId = parseInt(universalId.split(':')[0])
+    let itemId = parseInt(universalId.split(':')[1])
+    return {modId: modId, itemId: itemId}
+  }
+  
+  function modIdTOuniversalId(modId: number, itemId: number){ // {modId: 1, itemId: 2} -> "1:2"
+    return `${modId}:${itemId}`
+  }
+  
+  function numberYES(number: number | string | null): number{ // 数字推断
+    if (number){
+      if (typeof number === 'number'){
+        return number
+      } else if (typeof number ==='string'){
+        return parseInt(number)
+      }
     } else {
-      let arr_item = []
-      mods.main.forEach(async (mod, index) => {
-        let item = mod.main.find(item => item.name === inputitem)
-        if (item){
-          arr_item.push(index)
+      return 1
+    }
+  }
+
+  function modsfind(item: string){ // 查询物品名称所有的mod声明索引
+    let arr_item = []
+    mods.main.forEach(async (mod, index) => {
+      let item_in_mod = mod.main.find(item_in_mod => item_in_mod.name === item)
+      if (item_in_mod){
+        arr_item.push(index)
+      }
+    })
+    return arr_item
+  }
+
+  function findId(item: string){ // 物品名称 -> modid:物品id
+    let arr_item = modsfind(item)
+    if (arr_item.length === 1){
+      return mods.main[arr_item[0]].id + ':' + mods.main[arr_item[0]].main.find(item_in_mod => item_in_mod.name === item).id
+    } else if (arr_item.length === 0){
+      ctx.logger.error('没有找到该物品')
+      return 'Error: 没有找到该物品'
+    } else {
+      ctx.logger.error('该物品被多个mod声明，请检查你的mod')
+    }
+  }
+
+  function findName(itemId: string){ // modid:物品id -> 物品名称
+    let modId = parseInt(itemId.split(':')[0])
+    let itemId_in_mod = parseInt(itemId.split(':')[1])
+    let itemName = mods.main[modId].main.find(item_in_mod => item_in_mod.id === itemId_in_mod).name
+    return itemName
+  }
+
+  function inModfind(item: string){ // 物品名称 -> 物品声明
+    let arr_item = modsfind(item)
+    if (arr_item.length === 1){
+      return mods.main[arr_item[0]].main.find(item_in_mod => item_in_mod.name === item)
+    } else {
+      ctx.logger.error('该物品被多个mod声明，请检查你的mod')
+    }
+  }
+
+  async function addItem(item: string, userpId: string, platform: string, number: number){ // 添加物品
+    let useraId = await ctx.idconverter.getUserAid(userpId, platform)
+    let itemId = findId(item)
+    if (itemId === 'Error: 没有找到该物品'){
+      return itemId
+    }
+    let itemInfo = inModfind(item)
+    let nowHave = (await ctx.database.get('stardew_valley',{id: useraId},['item','building']))[0]
+    if (!nowHave){
+      if (itemInfo.main.type === 'building'){
+        await ctx.database.create('stardew_valley',{id: useraId,item: {main:[]} , building: {main:[{itemId: itemId, number: numberYES(number)}]}})
+      } else {
+        await ctx.database.create('stardew_valley',{id: useraId, item: {main:[{itemId: itemId, number: numberYES(number)}]}, building: {main:[]}})
+      }
+    } else {
+      if (itemInfo.main.type === 'building'){
+        let nowHaveBuilding = nowHave.building
+        let indexn = []
+        nowHaveBuilding.main.forEach((item, index) => {
+          if (item.itemId === itemId){
+            indexn.push(index)
+          }
+        })
+        if (indexn.length === 0){
+          nowHaveBuilding.main.push({itemId: itemId, number: numberYES(number)})
+          await ctx.database.set('stardew_valley',{id: useraId},{building: nowHaveBuilding})
+        } else if (indexn.length === 1){
+          nowHaveBuilding.main[indexn[0]].number += numberYES(number)
+          await ctx.database.set('stardew_valley',{id: useraId},{building: nowHaveBuilding})
+        } else {
+          ctx.logger.error('拥有物品id重复')
+        }
+      } else {
+        let nowHaveItem = nowHave.item
+        let indexn = []
+        nowHaveItem.main.forEach((item, index) => {
+          if (item.itemId === itemId){
+            indexn.push(index)
+          }
+        })
+        if (indexn.length === 0){
+          nowHaveItem.main.push({itemId: itemId, number: numberYES(number)})
+          await ctx.database.set('stardew_valley',{id: useraId},{item: nowHaveItem})
+        } else if (indexn.length === 1){
+          nowHaveItem.main[indexn[0]].number += numberYES(number)
+          await ctx.database.set('stardew_valley',{id: useraId},{item: nowHaveItem})
+        } else {
+          ctx.logger.error('拥有物品id重复')
+        }
+      }
+    }
+  }
+
+  async function removeItem(item: string, userpId: string, platform: string, number: number){ // 移除物品
+    let useraId = await ctx.idconverter.getUserAid(userpId, platform)
+    let itemId = findId(item)
+    if (itemId === 'Error: 没有找到该物品'){
+      return itemId
+    }
+    let itemInfo = inModfind(item)
+    let nowHave = (await ctx.database.get('stardew_valley',{id: useraId},['item','building']))[0]
+    if (nowHave.item.main.length === 0 && nowHave.building.main.length === 0){
+      return 'Error: 你没有任何物品'
+    } else if(itemInfo.main.type === 'building'){
+      let nowHaveBuilding = nowHave.building
+      let indexn = []
+      nowHaveBuilding.main.forEach((item, index) => {
+        if (item.itemId === itemId){
+          indexn.push(index)
         }
       })
-      if (arr_item.length === 0){
-        return '没有找到该物品'
-      } else if (arr_item.length === 1){
-        let item = mods.main[arr_item[0]].main.find(item => item.name === inputitem)
-        if (item.price.can === false){
-          return '该物品无法购买'
+      if (indexn.length === 0){
+        return 'Error: 你没有该建筑'
+      } else if (indexn.length === 1){
+        if (nowHaveBuilding.main[indexn[0]].number < numberYES(number)){
+          return 'Error: 你没有足够的该建筑'
         } else {
-          let userId = await ctx.idconverter.getUserAid(session.userId, session.platform)
+          nowHaveBuilding.main[indexn[0]].number -= numberYES(number)
+          if (nowHaveBuilding.main[indexn[0]].number === 0){
+            nowHaveBuilding.main.splice(indexn[0],1)
+          }
+          await ctx.database.set('stardew_valley',{id: useraId},{building: nowHaveBuilding})
+        }
+      } else {
+        ctx.logger.error('拥有物品id重复')
+      }
+    } else {
+      let nowHaveItem = nowHave.item
+      let indexn = []
+      nowHaveItem.main.forEach((item, index) => {
+        if (item.itemId === itemId){
+          indexn.push(index)
+        }
+      })
+      if (indexn.length === 0){
+        return 'Error: 你没有该物品'
+      } else if (indexn.length === 1){
+        if (nowHaveItem.main[indexn[0]].number < numberYES(number)){
+          return 'Error: 你没有足够的该物品'
+        } else {
+          nowHaveItem.main[indexn[0]].number -= numberYES(number)
+          if (nowHaveItem.main[indexn[0]].number === 0){
+            nowHaveItem.main.splice(indexn[0],1)
+          }
+          await ctx.database.set('stardew_valley',{id: useraId},{item: nowHaveItem})
+        }
+      } else {
+        ctx.logger.error('拥有物品id重复')
+      }
+    }
+  }
+
+  function probabilityFunction(probability: number): boolean{ // 瞬时概率系统
+    if (probability === 1) {
+      return true
+    } else {
+      return Math.random() < probability
+    }
+  }
+
+  function getRandomValue(max: number, min: number): number{ // 随机数生成器
+    return Math.floor(Math.random() * (max - min + 1)) + min
+  }
+
+  ctx.command('stardew-valley.购买 [name] [number]')
+  .action(async ({session}, name, number) => {
+    if (!name){
+      return '请输入物品名称'
+    } else {
+      let itemInfo = inModfind(name)
+      if (!itemInfo){
+        return '没有找到该物品'
+      } else if (itemInfo.price.can === false){
+        return '该物品无法购买'
+      } else {
+        try {
+          await ctx.monetary.cost(await ctx.idconverter.getUserAid(session.userId, session.platform), itemInfo.price.buy * numberYES(number))
+          await addItem(name, session.userId, session.platform, numberYES(number))
+          return '购买成功'
+        } catch (e) {
+          ctx.logger.error(e)
+          return '余额不足'
+        }
+      }
+    }
+  })
+
+  ctx.command('stardew-valley.卖出 [name] [number]')
+  .action(async ({session}, name, number) => {
+    if (!name){
+      return '请输入物品名称'
+    } else {
+      let itemInfo = inModfind(name)
+      if (!itemInfo){
+        return '没有找到该物品'
+      } else {
+        let remove = await removeItem(name, session.userId, session.platform, numberYES(number))
+        if (remove === ('Error: 你没有足够的该物品' || 'Error: 你没有该物品' || 'Error: 你没有足够的该建筑' || 'Error: 你没有该建筑' || 'Error: 你没有任何物品' || 'Error: 没有找到该物品')){
+          return remove
+        } else {
           try {
-            await ctx.monetary.cost(userId, item.price.buy * buy_number)
-            let database_userId = await ctx.database.get('stardew_valley',{id: userId},['id'])
-            if (database_userId.length === 0){
-              if (item.main.type === 'building'){
-                let add = []
-                for (let i = 0; i < buy_number; i++){
-                  add.push(`${mods.main[arr_item[0]].id}:${item.id}`)
-                }
-                await ctx.database.create('stardew_valley',{id: userId, building: add})
-              } else {
-                let add = []
-                for (let i = 0; i < buy_number; i++){
-                  add.push(`${mods.main[arr_item[0]].id}:${item.id}`)
-                }
-                await ctx.database.create('stardew_valley',{id: userId, item: add})
-              }
-              return '购买成功'
-            } else {
-              if (item.main.type === 'building'){
-                let data_in_database = (await ctx.database.get('stardew_valley',{id: userId},['building']))[0].building
-                for (let i = 0; i < buy_number; i++){
-                  data_in_database.push(`${mods.main[arr_item[0]].id}:${item.id}`)
-                }
-                await ctx.database.set('stardew_valley',{id: userId},{building: data_in_database})
-                return '购买成功'
-              } else {
-                let data_in_database = (await ctx.database.get('stardew_valley',{id: userId},['item']))[0].item
-                for (let i = 0; i < buy_number; i++){
-                  data_in_database.push(`${mods.main[arr_item[0]].id}:${item.id}`)
-                }
-                await ctx.database.set('stardew_valley',{id: userId},{item: data_in_database})
-                return '购买成功'
-              }
-            }
-          } catch (err) {
-            return '余额不足'
+            await ctx.monetary.gain(await ctx.idconverter.getUserAid(session.userId, session.platform), itemInfo.price.sell * numberYES(number))
+            return '成功卖出'
+          } catch (e) {
+            ctx.logger.error(e)
+            return e
           }
         }
-      } else {
-        return '该物品被多个mod声明，请检查你的mod'
       }
     }
   })
 
-  ctx.command('stardew-valley.卖出 [inputitem] [number]')
-  .action(async ({session}, inputitem, number) => {
-    let sell_number
-    if (number){
-      sell_number = parseInt(number)
+  ctx.command('stardew-valley.种植 [name] [number]')
+  .action(async ({session}, name, number) => {
+    if (!name){
+      return '请输入物品名称'
     } else {
-      sell_number = 1
-    }
-    let userId = await ctx.idconverter.getUserAid(session.userId, session.platform)
-    if (!inputitem){
-      let have = (await ctx.database.get('stardew_valley',{id: userId},['item']))[0].item
-      let building_have = (await ctx.database.get('stardew_valley',{id: userId},['building']))[0].building
-      if (have.length === 0 && building_have.length === 0){
-        return '你没有任何物品可以卖出'
-      } else {
-        let can_sell = []
-        for (let i = 0; i < have.length; i++){
-          let mod_id = parseInt(have[i].split(':')[0])
-          let item_id = parseInt(have[i].split(':')[1])
-          let itemname = (mods.main[mod_id].main.find(item => item.id === item_id)).name
-          can_sell.push(itemname)
-        }
-        for (let i = 0; i < building_have.length; i++){
-          let mod_id = parseInt(building_have[i].split(':')[0])
-          let item_id = parseInt(building_have[i].split(':')[1])
-          let itemname = (mods.main[mod_id].main.find(item => item.id === item_id)).name
-          can_sell.push(itemname)
-        }
-        return '请输入需卖出的物品，你当前有以下物品可卖出：&#10;' + can_sell.join('&#10;')
-      }
-    } else {
-      let have = (await ctx.database.get('stardew_valley',{id: userId},['item']))[0].item
-      let arr_item = []
-      mods.main.forEach(async (mod, index) => {
-        let item = mod.main.find(item => item.name === inputitem)
-        if (item){
-          arr_item.push(index)
-        }
-      })
-      let building_have = (await ctx.database.get('stardew_valley',{id: userId},['building']))[0].building
-      let arr_building = []
-      mods.main.forEach(async (mod, index) => {
-        let item = mod.main.find(item => item.name === inputitem)
-        if (item){
-          arr_building.push(index)
-        }
-      })
-      if (arr_item.length === 0 && arr_building.length === 0){
+      let itemInfo = inModfind(name)
+      if (!itemInfo){
         return '没有找到该物品'
-      } else if (arr_item.length === 1 || arr_building.length === 1){
-        if (arr_item.length === 1){
-          let sell_item = `${mods.main[arr_item[0]].id}:${(mods.main[arr_item[0]].main.find(item => item.name === inputitem)).id}`
-          if (have.includes(sell_item)){
-            let have_number = 0
-            for (let i = 0; i < have.length; i++){
-              if (have[i] === sell_item){
-                have_number++
-              }
-            }
-            if (have_number < sell_number){
-              return '你没有足够的该物品'
-            } else {
-              let item = mods.main[arr_item[0]].main.find(item => item.name === inputitem)
-              try {
-                await ctx.monetary.gain(userId, item.price.sell * sell_number)
-                let data_in_database = (await ctx.database.get('stardew_valley',{id: userId},['item']))[0].item
-                for (let i = 0; i < sell_number; i++){
-                  data_in_database.splice(data_in_database.indexOf(sell_item),1)
-                }
-                await ctx.database.set('stardew_valley',{id: userId},{item: data_in_database})
-                return '卖出成功'
-              } catch (err) {
-                ctx.logger.error(err)
-                return '卖出失败'
-              }
-            }
-          } else if (building_have.includes(sell_item)){
-            let have_number = 0
-            for (let i = 0; i < building_have.length; i++){
-              if (building_have[i] === sell_item){
-                have_number++
-              }
-            }
-            if (have_number < sell_number){
-              return '你没有足够的该物品'
-            } else {
-              let item = mods.main[arr_item[0]].main.find(item => item.name === inputitem)
-              try {
-                await ctx.monetary.gain(userId, item.price.sell * sell_number)
-                let data_in_database = (await ctx.database.get('stardew_valley',{id: userId},['building']))[0].building
-                for (let i = 0; i < sell_number; i++){
-                  data_in_database.splice(data_in_database.indexOf(sell_item),1)
-                }
-                await ctx.database.set('stardew_valley',{id: userId},{building: data_in_database})
-                return '卖出成功'
-              } catch (err) {
-                ctx.logger.error(err)
-                return '卖出失败'
-              }
-            }
-          }
-        } else {
-          return '你没有该物品'
-        }
       } else {
-        return '该物品被多个mod声明，请检查你的mod'
-      }
-    }
-  })
-
-  ctx.command('stardew-valley.种植 [inputitem] [number]')
-  .action(async ({session}, inputitem, number) => {
-    let plant_number
-    if (number){
-      plant_number = parseInt(number)
-    } else {
-      plant_number = 1
-    }
-    if (!inputitem){
-      let userId = await ctx.idconverter.getUserAid(session.userId, session.platform)
-      let arr_item = (await ctx.database.get('stardew_valley',{id: userId},['item']))[0].item
-      if (arr_item.length === 0){
-        return '你没有任何物品可以种植'
-      } else {
-        let can_plant = []
-        for (let i = 0; i < arr_item.length; i++){
-          let mod_id = parseInt(arr_item[i].split(':')[0])
-          let item_id = parseInt(arr_item[i].split(':')[1])
-          let item = mods.main[mod_id].main.find(item => item.id === item_id)
-          if (item.main.type === 'crop'){
-            can_plant.push(item.name)
-          }
+        let item_Info = itemInfo.main.main as crop
+        let nowHave = (await ctx.database.get('stardew_valley',{id: await ctx.idconverter.getUserAid(session.userId, session.platform)}))[0]
+        let max = 0
+        for (let i = 0; i < nowHave.building.main.length; i++){
+          let mod = inModfind(findName(nowHave.building.main[i].itemId)).main.main as building
+          max += mod.max
         }
-        if (can_plant.length === 0){
-          return '你没有任何物品可以种植'
+        let Crop_Growing = await ctx.database.get('stardew_valley_crop',{owner_id: await ctx.idconverter.getUserAid(session.userId, session.platform)})
+        let put = numberYES(number) + Crop_Growing.length
+        if (put > max){
+          return '你没有足够的空间'
         } else {
-          return '你有以下物品可以种植：&#10;' + can_plant.join('&#10;')
-        }
-      }
-    } else {
-      let userId = await ctx.idconverter.getUserAid(session.userId, session.platform)
-      let arr_item = (await ctx.database.get('stardew_valley',{id: userId},['item']))[0].item
-      if (arr_item.length === 0){
-        return '你没有任何物品可以种植'
-      } else {
-        let can_plant = []
-        for (let i = 0; i < arr_item.length; i++){
-          let mod_id = parseInt(arr_item[i].split(':')[0])
-          let item_id = parseInt(arr_item[i].split(':')[1])
-          let item = mods.main[mod_id].main.find(item => item.id === item_id)
-          if (item.main.type === 'crop'){
-            can_plant.push(arr_item[i])
+          let remove = await removeItem(name, session.userId, session.platform, numberYES(number))
+          if (remove === ('Error: 你没有足够的该物品' || 'Error: 你没有该物品' || 'Error: 你没有足够的该建筑' || 'Error: 你没有该建筑' || 'Error: 你没有任何物品' || 'Error: 没有找到该物品')){
+            return remove
           }
-        }
-        if (can_plant.length === 0){
-          return '你没有任何物品可以种植'
-        } else {
-          let arr_crop = []
-          mods.main.forEach(async (mod, index) => {
-            let item = mod.main.find(item => item.name === inputitem)
-            if (item){
-              arr_crop.push(index)
-            }
-          })
-          if (arr_crop.length === 0){
-            return '没有找到该物品'
-          } else if (arr_crop.length === 1){
-            let arr_crop_id = `${mods.main[arr_crop[0]].id}:${(mods.main[arr_crop[0]].main.find(item => item.name === inputitem)).id}`
-            if (can_plant.includes(arr_crop_id)){
-              let plant_item_have = 0
-              for (let i = 0; i < arr_item.length; i++){
-                if (arr_item[i] === arr_crop_id){
-                  plant_item_have++
-                }
-              }
-              if (plant_item_have < plant_number){
-                return '你没有足够的该物品'
-              } else {
-                let max_plant: number = 0
-                let building = (await ctx.database.get('stardew_valley',{id: userId},['building']))[0].building
-                for (let i = 0; i < building.length; i++){
-                  let mod_id = parseInt(building[i].split(':')[0])
-                  let item_id = parseInt(building[i].split(':')[1])
-                  let item = (mods.main[mod_id].main.find(item => item.id === item_id)).main.main as building
-                  if (item.type === 'farm'){
-                    if ((mods.main[arr_crop[0]].main.find(item => item.name === inputitem)).main.main.level <= item.level){
-                      max_plant = max_plant + item.max
-                    }
-                  }
-                }
-                let now_plant = (await ctx.database.get('stardew_valley_crop',{owner_id: userId},['crop_id'])).length
-                if (now_plant >= max_plant){
-                  return '你已经达到最大种植数量'
-                } else {
-                  let DateNow = new Date()
-                  let timestamp = DateNow.getTime()
-                  let growthTime = (mods.main[arr_crop[0]].main.find(item => item.name === inputitem)).main.main as crop
-                  let time = new Date(timestamp + growthTime.growthTime)
-                  let haveNow = (await ctx.database.get('stardew_valley',{id: userId},['item']))[0].item
-                  for (let i = 0; i < plant_number; i++){
-                    await ctx.database.create('stardew_valley_crop',{owner_id: userId, crop_id: arr_crop_id, date: time})
-                    haveNow.splice(haveNow.indexOf(arr_crop_id),1)
-                  }
-                  await ctx.database.set('stardew_valley',{id: userId},{item: haveNow})
-                  return '种植成功，种植时间至' + time
-                }
-              }
+          let growthTime = Date.now() + item_Info.growthTime
+          for (let i = 0; i < numberYES(number); i++){
+            let all_id = (await ctx.database.get('stardew_valley_crop',{owner_id: await ctx.idconverter.getUserAid(session.userId, session.platform)})).map(item => item.id)
+            let id
+            if (all_id.length === 0){
+              id = 0
             } else {
-              return '你没有该物品可以种植'
+              id = Math.max(...all_id) + 1
             }
-          } else {
-            return '该物品被多个mod声明，请检查你的mod'
+            await ctx.database.create('stardew_valley_crop',{id: id, owner_id: await ctx.idconverter.getUserAid(session.userId, session.platform), crop_id: findId(name), date: new Date(growthTime)})
           }
+          return '种植成功，种植时间至' + new Date(growthTime)
         }
       }
     }
@@ -389,143 +384,121 @@ export function apply(ctx: Context, cfg: Config) {
 
   ctx.command('stardew-valley.收获')
   .action(async ({session}) => {
-    let userId = await ctx.idconverter.getUserAid(session.userId, session.platform)
-    let arr_crop = await ctx.database.get('stardew_valley_crop',{owner_id: userId})
-    if (arr_crop.length === 0){
-      return '你没有任何已种植的物品'
+    let Crop_Growing = await ctx.database.get('stardew_valley_crop',{owner_id: await ctx.idconverter.getUserAid(session.userId, session.platform)})
+    if (Crop_Growing.length === 0){
+      return '你没有种植任何作物'
     } else {
-      let harvest_crop = []
-      for (let i = 0; i < arr_crop.length; i++){
-        let date = arr_crop[i].date.getDate()
-        let dateNow = new Date().getDate()
-        if (date <= dateNow){
-          harvest_crop.push(arr_crop[i])
-        }
-      }
-      if (harvest_crop.length === 0){
-        return '你没有任何已到收获时间的物品'
-      } else {
-        let harvest = []
-        let nowUserHave = (await ctx.database.get('stardew_valley',{id: userId},['item']))[0].item
-        for (let i = 0; i < harvest_crop.length; i++){
-          await ctx.database.remove('stardew_valley_crop',{id: harvest_crop[i].id})
-          let mod_id = parseInt(harvest_crop[i].crop_id.split(':')[0])
-          let item_id = parseInt(harvest_crop[i].crop_id.split(':')[1])
-          let item = (mods.main[mod_id].main.find(item => item.id === item_id)).main.main as crop
-          item.harvestOutput.forEach(async (item) => {
-            for (let i = 0; i < item.number; i++){
-              nowUserHave.push(item.id)
-              let harvest_mod_id = parseInt(item.id.split(':')[0])
-              let harvest_item_id = parseInt(item.id.split(':')[1])
-              let harvest_name = (mods.main[harvest_mod_id].main.find(item => item.id === harvest_item_id)).name
-              harvest.push(harvest_name)
+      let now = Date.now()
+      let outoutput = []
+      for (let i = 0; i < Crop_Growing.length; i++){
+        let output = []
+        let cropInfo = inModfind(findName(Crop_Growing[i].crop_id)).main.main as crop
+        if (now >= Crop_Growing[i].date.getTime()){
+          const add_output = async (cropInfo: crop) => {
+            for (let i = 0; i < cropInfo.harvestOutput.output.length; i++){
+              if (probabilityFunction(cropInfo.harvestOutput.output[i].probability) === true){
+                let numberOfCycles = getRandomValue(cropInfo.harvestOutput.output[i].max, cropInfo.harvestOutput.output[i].min)
+                for (let j = 0; j < numberOfCycles; j++){
+                  if (output.length >= cropInfo.harvestOutput.max){
+                    return output
+                  } else if (output.length + numberOfCycles >= cropInfo.harvestOutput.max){
+                    for (let k = 0; k < cropInfo.harvestOutput.max - output.length; k++){
+                      output.push(cropInfo.harvestOutput.output[i].id)
+                      return output
+                    }
+                  } else {
+                    output.push(cropInfo.harvestOutput.output[i].id)
+                  }
+                }
+              }
             }
+            if (output.length <= cropInfo.harvestOutput.min){
+              await add_output(cropInfo)
+            } else {
+              return output
+            }
+          }
+          await add_output(cropInfo)
+          await ctx.database.remove('stardew_valley_crop', {id: Crop_Growing[i].id})
+          for (let j = 0; j < output.length; j++){
+            await addItem(findName(output[j]), session.userId, session.platform, 1)
+          }
+          output.forEach(async (item) => {
+            outoutput.push(findName(item))
           })
         }
-        await ctx.database.set('stardew_valley',{id: userId},{item: nowUserHave})
-        return `收获成功，你收获了：${ListTOString(harvest)}`
+      }
+      if (outoutput.length === 0){
+        return '你没有种植任何作物'
+      } else {
+        return '收获成功，收获物品：' + ListTOString(outoutput)
       }
     }
   })
 
-  ctx.command('stardew-valley.查看在种作物')
-  .action(async ({session}) => {
-    let userId = await ctx.idconverter.getUserAid(session.userId, session.platform)
-    let have = (await ctx.database.get('stardew_valley_crop',{owner_id: userId},['crop_id','date']))
-    if (have.length === 0){
-      return '你没有任何已种植的物品'
-    } else {
-      let date = Math.max(...have.map(item => item.date.getDate()))
-      let arr_crop = []
-      for (let i = 0; i < have.length; i++){
-        mods.main.forEach(async (mod, index) => {
-          let item_mod = mod.main.find(item => item.id === parseInt((have[i].crop_id.split(':'))[0]))
-          if (item_mod){
-            let item_name = (mods.main[index].main.find(item => item.id === parseInt((have[i].crop_id.split(':'))[1]))).name
-            arr_crop.push(item_name)
-          }
-        })
-      }
-      return `你在种的作物：${ListTOString(arr_crop)}&#10;最短种植时间：${new Date(date)}`
-    }
-  })
-
-  ctx.command('stardew-valley.查看.建筑')
-  .action(async ({session}) => {
-    let userId = await ctx.idconverter.getUserAid(session.userId, session.platform)
-    let have = (await ctx.database.get('stardew_valley',{id: userId},['building']))[0].building
-    if (have.length === 0){
-      return '你没有任何建筑'
-    } else {
-      let arr_building = []
-      for (let i = 0; i < have.length; i++){
-        mods.main.forEach(async (mod, index) => {
-          let item_mod = mod.main.find(item => item.id === parseInt((have[i].split(':'))[0]))
-          if (item_mod){
-            let item_name = (mods.main[index].main.find(item => item.id === parseInt((have[i].split(':'))[1]))).name
-            arr_building.push(item_name)
-          }
-        })
-      }
-      return `你有以下建筑：${ListTOString(arr_building)}`
-    }
-  })
-
-  ctx.command('stardew-valley.查看.物品')
-  .action(async ({session}) => {
-    let userId = await ctx.idconverter.getUserAid(session.userId, session.platform)
-    let have = (await ctx.database.get('stardew_valley',{id: userId},['item']))[0].item
-    if (have.length === 0){
-      return '你没有任何物品'
-    } else {
-      let arr_item = []
-      for (let i = 0; i < have.length; i++){
-        mods.main.forEach(async (mod, index) => {
-          let item_mod = mod.main.find(item => item.id === parseInt((have[i].split(':'))[0]))
-          if (item_mod){
-            let item_name = (mods.main[index].main.find(item => item.id === parseInt((have[i].split(':'))[1]))).name
-            arr_item.push(item_name)
-          }
-        })
-      }
-      return `你有以下物品：${ListTOString(arr_item)}`
-    }
-  })
-
-  ctx.command('stardew-valley.描述 [inputitem]')
-  .action(async ({session}, inputitem) => {
-    if (!inputitem){
+  ctx.command('stardew-valley.描述 [name]')
+  .action(async ({session}, name) => {
+    if (!name){
       return '请输入物品名称'
     } else {
-      let arr_item = []
-      mods.main.forEach(async (mod, index) => {
-        let item = mod.main.find(item => item.name === inputitem)
-        if (item){
-          arr_item.push(item)
-        }
-      })
-      if (arr_item.length === 0){
+      let itemInfo = inModfind(name)
+      if (!itemInfo){
         return '没有找到该物品'
-      } else if (arr_item.length === 1){
-        let desc = arr_item[0].description
-        let canbuy = arr_item[0].price.can
-        let sell
-        let buy
-        if (canbuy === true){
-          sell = arr_item[0].price.sell
-          buy = arr_item[0].price.buy
-        }
-        if (canbuy === false){
-          return `描述：${desc}&#10;卖价：${sell}`
-        } else if (canbuy === true){
-          return `描述：${desc}&#10;卖价：${sell}&#10;买价：${buy}`
-        } else {
-          return '该物品没有描述'
-        }
       } else {
-        return '该物品被多个mod声明，请检查你的mod'
+        let desc = itemInfo.description
+        return desc
       }
     }
   })
 
+  ctx.command('stardew-valley.查看.拥有物品')
+  .action(async ({session}) => {
+    let nowHave = (await ctx.database.get('stardew_valley',{id: await ctx.idconverter.getUserAid(session.userId, session.platform)},['item','building']))[0]
+    if (nowHave.item.main.length === 0 && nowHave.building.main.length === 0){
+      return '你没有任何物品'
+    }
+    let have_name_list = []
+    for (let i = 0; i < nowHave.item.main.length; i++){
+      have_name_list.push(findName(nowHave.item.main[i].itemId) + 'x' + nowHave.item.main[i].number)
+    }
+    for (let i = 0; i < nowHave.building.main.length; i++){
+      have_name_list.push(findName(nowHave.building.main[i].itemId) + 'x' + nowHave.building.main[i].number)
+    }
+    return '你当前拥有以下物品：' + have_name_list.join('、')
+  })
+
+  ctx.command('stardew-valley.查看.可购买物品')
+  .action(async ({session}) => {
+    let canBuy_item_name_list = []
+    mods.main.forEach(async (mod) => {
+      for (let i = 0; i < mod.main.length; i++){
+        if (mod.main[i].price.can === true){
+          canBuy_item_name_list.push(`物品名称：${mod.main[i].name}，买价：${mod.main[i].price.buy}，卖价：${mod.main[i].price.sell}`)
+        }
+      }
+    })
+    return '你可以购买以下物品：&#10;' + canBuy_item_name_list.join('&#10;')
+  })
+
+  ctx.command('stardew-valley.查看.种植作物')
+  .action(async ({session}) => {
+    let Crop_Growing = await ctx.database.get('stardew_valley_crop',{owner_id: await ctx.idconverter.getUserAid(session.userId, session.platform)})
+    if (Crop_Growing.length === 0){
+      return '你没有种植任何作物'
+    } else {
+      let now = Date.now()
+      let nowHaveName = []
+      let canHarvestItemName = []
+      for (let i = 0; i < Crop_Growing.length; i++){
+        let name = findName(Crop_Growing[i].crop_id)
+        nowHaveName.push(name)
+        if (now >= Crop_Growing[i].date.getTime()){
+          canHarvestItemName.push(name)
+        }
+      }
+      let fastest = new Date(Math.min(...Crop_Growing.map(item => item.date.getTime())))
+      return `你当前种植的农作物有：${ListTOString(nowHaveName)}&#10;可收获的农作物有：${ListTOString(canHarvestItemName)}&#10;最快收获时间：${fastest}`
+    }
+  })
+  console.log(mods)
 }
