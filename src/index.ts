@@ -42,6 +42,7 @@ declare module 'koishi' {
       owner_id: number
       crop_id: string
       date: Date
+      location: number
     }
   }
 }
@@ -69,7 +70,8 @@ export function apply(ctx: Context, cfg: Config) {
     id: 'unsigned',
     owner_id: 'unsigned',
     crop_id: 'string',
-    date: 'timestamp'
+    date: 'timestamp',
+    location: 'unsigned'
   },{
     primary: ['id'],
     autoInc: true
@@ -292,8 +294,31 @@ export function apply(ctx: Context, cfg: Config) {
     return Math.floor(Math.random() * (max - min + 1)) + min
   }
 
+  async function checkPlayerHaveItem(playerPid: string, platform: string): Promise<void> { // 检查玩家是否有物品
+    let userId = await ctx.idconverter.getUserAid(playerPid, platform)
+    let userItem = await ctx.database.get('stardew_valley',{id: userId})
+    let add = {item: null,buidling: null}
+    if (userItem.length === 0){
+      await ctx.database.create('stardew_valley',{id: userId, item: {main: []}, building: {main: []}})
+      return
+    }
+    let userItems = userItem[0]
+    if (!userItems.item){
+      add.item = {main: []}
+    } else {
+      add.item = userItems.item
+    }
+    if (!userItems.building){
+      add.buidling = {main: []}
+    } else {
+      add.buidling = userItems.building
+    }
+    await ctx.database.set('stardew_valley',{id: userId},{item: add.item, building:add.buidling})
+  }
+
   ctx.command('stardew-valley.购买 [name] [number]')
   .action(async ({session}, name, number) => {
+    await checkPlayerHaveItem(session.userId, session.platform)
     if (!name){
       return '请输入物品名称'
     } else {
@@ -317,6 +342,7 @@ export function apply(ctx: Context, cfg: Config) {
 
   ctx.command('stardew-valley.卖出 [name] [number]')
   .action(async ({session}, name, number) => {
+    await checkPlayerHaveItem(session.userId, session.platform)
     if (!name){
       return '请输入物品名称'
     } else {
@@ -342,6 +368,7 @@ export function apply(ctx: Context, cfg: Config) {
 
   ctx.command('stardew-valley.种植 [name] [number]')
   .action(async ({session}, name, number) => {
+    await checkPlayerHaveItem(session.userId, session.platform)
     if (!name){
       return '请输入物品名称'
     } else {
@@ -367,14 +394,14 @@ export function apply(ctx: Context, cfg: Config) {
           }
           let growthTime = Date.now() + item_Info.growthTime
           for (let i = 0; i < numberYES(number); i++){
-            let all_id = (await ctx.database.get('stardew_valley_crop',{owner_id: await ctx.idconverter.getUserAid(session.userId, session.platform)})).map(item => item.id)
+            let all_id = (await ctx.database.get('stardew_valley_crop',{location: 1},['id'])).map(item => item.id)
             let id
             if (all_id.length === 0){
               id = 0
             } else {
               id = Math.max(...all_id) + 1
             }
-            await ctx.database.create('stardew_valley_crop',{id: id, owner_id: await ctx.idconverter.getUserAid(session.userId, session.platform), crop_id: findId(name), date: new Date(growthTime)})
+            await ctx.database.create('stardew_valley_crop',{id: id, owner_id: await ctx.idconverter.getUserAid(session.userId, session.platform), crop_id: findId(name), date: new Date(growthTime), location: 1})
           }
           return '种植成功，种植时间至' + new Date(growthTime)
         }
@@ -384,6 +411,7 @@ export function apply(ctx: Context, cfg: Config) {
 
   ctx.command('stardew-valley.收获')
   .action(async ({session}) => {
+    await checkPlayerHaveItem(session.userId, session.platform)
     let Crop_Growing = await ctx.database.get('stardew_valley_crop',{owner_id: await ctx.idconverter.getUserAid(session.userId, session.platform)})
     if (Crop_Growing.length === 0){
       return '你没有种植任何作物'
@@ -438,6 +466,7 @@ export function apply(ctx: Context, cfg: Config) {
 
   ctx.command('stardew-valley.描述 [name]')
   .action(async ({session}, name) => {
+    await checkPlayerHaveItem(session.userId, session.platform)
     if (!name){
       return '请输入物品名称'
     } else {
@@ -453,6 +482,7 @@ export function apply(ctx: Context, cfg: Config) {
 
   ctx.command('stardew-valley.查看.拥有物品')
   .action(async ({session}) => {
+    await checkPlayerHaveItem(session.userId, session.platform)
     let nowHave = (await ctx.database.get('stardew_valley',{id: await ctx.idconverter.getUserAid(session.userId, session.platform)},['item','building']))[0]
     if (nowHave.item.main.length === 0 && nowHave.building.main.length === 0){
       return '你没有任何物品'
@@ -469,6 +499,7 @@ export function apply(ctx: Context, cfg: Config) {
 
   ctx.command('stardew-valley.查看.可购买物品')
   .action(async ({session}) => {
+    await checkPlayerHaveItem(session.userId, session.platform)
     let canBuy_item_name_list = []
     mods.main.forEach(async (mod) => {
       for (let i = 0; i < mod.main.length; i++){
@@ -482,6 +513,7 @@ export function apply(ctx: Context, cfg: Config) {
 
   ctx.command('stardew-valley.查看.种植作物')
   .action(async ({session}) => {
+    await checkPlayerHaveItem(session.userId, session.platform)
     let Crop_Growing = await ctx.database.get('stardew_valley_crop',{owner_id: await ctx.idconverter.getUserAid(session.userId, session.platform)})
     if (Crop_Growing.length === 0){
       return '你没有种植任何作物'
@@ -500,5 +532,4 @@ export function apply(ctx: Context, cfg: Config) {
       return `你当前种植的农作物有：${ListTOString(nowHaveName)}&#10;可收获的农作物有：${ListTOString(canHarvestItemName)}&#10;最快收获时间：${fastest}`
     }
   })
-  console.log(mods)
 }

@@ -1,7 +1,7 @@
 {
     "name": "Stardew_Valley",
     "id": 0,
-    "version": "1.0.0",
+    "version": "1.0.2",
     "description": "koishi星露谷物语插件主要内容文件",
     "main": [
         {
