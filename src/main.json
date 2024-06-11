@@ -1,7 +1,7 @@
 {
     "name": "Stardew_Valley",
     "id": 0,
-    "version": "1.0.2",
+    "version": "1.0.4",
     "description": "koishi星露谷物语插件主要内容文件",
     "main": [
         {
@@ -12,7 +12,7 @@
                 "type": "crop",
                 "main": {
                     "level": 0,
-                    "growthTime": 7200000,
+                    "growthTime": 14400000,
                     "harvestOutput": {
                         "max": 3,
                         "min": 1,
@@ -35,8 +35,8 @@
             },
             "price": {
                 "can": true,
-                "sell": 10,
-                "buy": 10
+                "sell": 2,
+                "buy": 3
             }
         },
         {
@@ -48,13 +48,13 @@
                 "main": {
                     "type": "farm",
                     "level": 0,
-                    "max": 10
+                    "max": 15
                 }
             },
             "price": {
                 "can": true,
                 "sell": 100,
-                "buy": 100
+                "buy": 1000
             }
         },
         {
