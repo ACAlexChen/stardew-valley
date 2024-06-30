@@ -1,10 +1,11 @@
 {
     "name": "Stardew_Valley",
     "id": 0,
-    "version": "1.0.4",
+    "version": "1.0.6",
     "description": "koishi星露谷物语插件主要内容文件",
     "main": [
         {
+            "type": "item",
             "name": "土豆",
             "id": 0,
             "description": "土豆作物",
@@ -40,6 +41,7 @@
             }
         },
         {
+            "type": "item",
             "name": "普通农场",
             "id": 1,
             "description": "非常tm普通的农场",
@@ -58,6 +60,7 @@
             }
         },
         {
+            "type": "item",
             "name": "毒土豆",
             "id": 2,
             "description": "毒性很强的土豆，不能再次种植",
@@ -66,7 +69,7 @@
             },
             "price": {
                 "can": false,
-                "sell": 5
+                "sell": 1
             }
         }
     ]

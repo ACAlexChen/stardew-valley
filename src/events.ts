@@ -1,63 +1,102 @@
 import { Context } from 'koishi'
-import { Config } from './index'
 import { mods, mod } from './type'
-import { modfunction } from './function'
-
-
-export function events(ctx: Context, cfg: Config, mods: mods){
-  action(ctx, cfg, mods)
-
-  var modsfunction = modfunction(ctx, mods)
-
-  mods.main.forEach((mod) => {
-    mod.main.forEach((item) => {
-      if ((item as mod.events).type === 'instantaneousEvents'){
-        if ((item as mod.events).main.listener.map(item => item.listenername).includes('stardew-valley/plant')){
-          ctx.on('stardew-valley/plant', (crop, session) => {
-            if (modsfunction.probabilityFunction(((item as mod.events).main as mod.instantaneousEvents).probability) === true){
-              session.send(((item as mod.events).main as mod.instantaneousEvents).message)
-              item.main.action.forEach(action => {
-                if (action.includes('crop')){
-                  ctx.emit(action,{cropid: crop.cropid, number: 1},session)
-                }
-              })
-            }
-          })
+/* export function listener(ctx: Context){
+  const listener = {
+    'stardew-valley/listener-购买': [],
+    'stardew-valley/listener-种植': []
+  }
+  const action = [
+    'stardew-valley/action-移除物品',
+    'stardew-valley/action-移除作物',
+    'stardew-valley/action-添加物品',
+    'stardew-valley/action-添加作物'
+  ]
+  let mods: mods
+  ctx.on('stardew-valley/plugin-reload-mods', (rmods) => {
+    mods = rmods as mods
+  })
+  for (let i = 0; i < mods.main.length; i++){
+    for (let j = 0; j < mods.main[i].main.length; j++){
+      if ((mods as mods).main[i].main[j].type === 'event'){
+        if (listener[((mods as mods).main[i].main[j] as mod.events).listener]){
+          listener[((mods as mods).main[i].main[j] as mod.events).listener].push((mods as mods).main[i].main[j] as mod.events)
         }
       }
-    })
+    }
+  }
+} */
+export function action(ctx: Context) {
+  let mods
+  ctx.on('stardew-valley/plugin-reload-mods', (rmods) => {
+    mods = rmods as mods
   })
-}
-
-function action(ctx: Context, cfg: Config, mods: mods){
-  var modsfunction = modfunction(ctx, mods)
-
-  ctx.on('stardew-valley/plugin-loaded',() => {
-    ctx.setTimeout(() => {
-      ctx.emit('stardew-valley/plugin-return-mods', mods)
-    },1000)
-  })
-  ctx.on('stardew-valley/action-add-item',(item, session) => {
-    modsfunction.checkPlayerHaveItem(session.userId, session.platform)
-    modsfunction.addItem(modsfunction.findName(item.itemid), session.userId, session.platform, item.number)
-  })
-
-  ctx.on('stardew-valley/action-add-crop',async (crop, session) => {
-    modsfunction.checkPlayerHaveItem(session.userId, session.platform)
-    let nowPlant = await ctx.database.get('stardew_valley_crop', {owner_id: await ctx.idconverter.getUserAid(session.userId, session.platform)})
-    let nowHaveBuilding = await ctx.database.get('stardew_valley',{id: await ctx.idconverter.getUserAid(session.userId, session.platform)},['building.main'])
-    let maxPlant: number = 0
-    nowHaveBuilding.forEach(building => {
-      building.building.main.forEach((item) => {
-        if ((item as mod.building).type === 'farm'){
-          maxPlant += (item as mod.building).max
-        }
+  ctx.on('stardew-valley/action-添加作物',async (item, session) => {
+    const playerAid = await ctx.idconverter.getUserAid(session.userId, session.platform)
+    const allCrop = await ctx.database.get('stardew_valley_crop', {location: 1})
+    const maxId = Math.max(...allCrop.map(crop => crop.id))
+    for (let i = 0; i < item.number; i++){
+      await ctx.database.create('stardew_valley_crop', {
+        id: maxId + 1,
+        owner_id: playerAid,
+        crop_id: item.id,
+        date: new Date(
+          Date.now() +
+          (((mods as mods).main
+          .find(mod => mod.id ===
+            Number(item.id.split(':')[0])).main as mod.item[])
+          .find(mod => mod.id ===
+            Number(item.id.split(':')[1])).main.main as mod.crop)
+          .growthTime
+        ),
+        location: 1
       })
-    })
-    if (nowPlant.length < maxPlant){
-      for (let i = 0; i < (maxPlant - nowPlant.length) && i < crop.number; i++){
-        await ctx.database.create('stardew_valley_crop',{id: Math.max(...nowPlant.map(item => item.id)) + 1,owner_id: await ctx.idconverter.getUserAid(session.userId, session.platform), crop_id: crop.cropid})
+    }
+  })
+  ctx.on('stardew-valley/action-添加物品',async (item, session) => {
+    const playerAid = await ctx.idconverter.getUserAid(session.userId, session.platform)
+    const playerItem = await ctx.database.get('stardew_valley', {id: playerAid})
+    const itemInfo = ((mods as mods).main
+      .find(mod => mod.id ===
+        Number(item.id.split(':')[0])).main as mod.item[])
+      .find(mod => mod.id ===
+        Number(item.id.split(':')[1])).main
+    if (itemInfo.type === 'building'){
+      const building = playerItem[0].building
+      const nowHave = building.main.find(mod => mod.itemId === item.id)
+      if (!nowHave){
+        await ctx.database.set('stardew_valley', {id: playerAid}, {
+          building: {
+            main: [
+              {
+                itemId: item.id,
+                number: item.number
+              }
+            ]
+          }
+        })
+      } else {
+        building.main.find(mod => mod.itemId === item.id).number += item.number
+        await ctx.database.set('stardew_valley', {id: playerAid}, {building: building})
+      }
+    } else {
+      const nowHave = playerItem[0].item.main.find(mod => mod.itemId === item.id)
+      if (!nowHave){
+        await ctx.database.set('stardew_valley', {id: playerAid}, {
+          item: {
+            main: [
+              {
+                itemId: item.id,
+                number: item.number
+              }
+            ]
+          }
+        })
+      } else {
+        playerItem[0].item.main.find(mod => mod.itemId === item.id).number += item.number
+        await ctx.database.set('stardew_valley', {id: playerAid}, {item: playerItem[0].item})
       }
     }
   })
 }
+
+// TODO: 事件系统局限性太大，所以就暂时不考虑如何实现了，什么时候我心情好了再考虑

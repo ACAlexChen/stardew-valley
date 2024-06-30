@@ -1,14 +1,45 @@
+/**
+ *                             _ooOoo_
+ *                            o8888888o
+ *                            88" . "88
+ *                            (| -_- |)
+ *                            O\  =  /O
+ *                         ____/`---'\____
+ *                       .'  \\|     |//  `.
+ *                      /  \\|||  :  |||//  \
+ *                     /  _||||| -:- |||||-  \
+ *                     |   | \\\  -  /// |   |
+ *                     | \_|  ''\---/''  |   |
+ *                     \  .-\__  `-`  ___/-. /
+ *                   ___`. .'  /--.--\  `. . __
+ *                ."" '<  `.___\_<|>_/___.'  >'"".
+ *               | | :  `- \`.;`\ _ /`;.`/ - ` : | |
+ *               \  \ `-.   \_ __\ /__ _/   .-` /  /
+ *          ======`-.____`-.___\_____/___.-`____.-'======
+ *                             `=---='
+ *          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ *                     佛祖保佑        永无BUG
+ *            佛曰:
+ *                   写字楼里写字间，写字间里程序员；
+ *                   程序人员写程序，又拿程序换酒钱。
+ *                   酒醒只在网上坐，酒醉还来网下眠；
+ *                   酒醉酒醒日复日，网上网下年复年。
+ *                   但愿老死电脑间，不愿鞠躬老板前；
+ *                   奔驰宝马贵者趣，公交自行程序员。
+ *                   别人笑我忒疯癫，我笑自己命太贱；
+ *                   不见满街漂亮妹，哪个归得程序员？
+*/
+
+
+
 import { Context, Schema } from 'koishi'
-import { mods, mod } from './type'
-import { events } from './events'
+
 import { command } from './command'
-import {} from './type'
+import { modloader } from './modsloader'
+import { mods } from './type'
 import {} from 'koishi-plugin-binding-id-converter'
 import {} from 'koishi-plugin-monetary'
-import * as fs from 'fs'
-import * as path from 'path'
-const main = require('./main.json') as mod.mod
-const version = require('../package.json').version as string
+import { action } from './events'
 
 export const name = 'stardew-valley'
 
@@ -17,7 +48,7 @@ export const inject = {
     'database',
     'idconverter',
     'monetary'
-  ],
+  ]
 }
 
 export interface Config {
@@ -30,73 +61,43 @@ export const Config: Schema<Config> = Schema.intersect([
   }).description('基础设置')
 ]) as Schema<Config>
 
+
 export function apply(ctx: Context, cfg: Config) {
+  const loadmods = modloader()
 
-  function loadMods(filepath : string, mods: mods){
-    if (path.extname(filepath) === '.json'){
-      const data = fs.readFileSync(filepath, 'utf-8')
-      const mod = JSON.parse(data) as mod.mod
-      if (mod.version === version){
-        mods.main.push(mod)
-        return
-      } else {
-        return
-      }
+  let loadmod
+  if (typeof loadmods === 'string'){
+    loadmod = {right: false, message: loadmods}
+  } else {
+    loadmod = {right: true, message: loadmods}
+  }
+
+  ctx.on('ready', () => {
+    if (loadmod.right === false){
+      ctx.logger.error(loadmod.message)
+      ctx.stop()
+    } else {
+      ctx.setTimeout(() => {
+        ctx.emit('stardew-valley/plugin-reload-mods', loadmod.message)
+      }, 1000)
     }
-  }
+  })
 
+  let mods = loadmods as mods
 
-
-  function loadModsFolders(folderpath: string): { type: 'error' | 'success', message: mods | Error } {
-    try {
-      const mods: mods = { main: [] }
-
-      const traverseFolders = (currentPath: string) => {
-        const files = fs.readdirSync(currentPath)
-        files.forEach((file) => {
-          const filePath = path.join(currentPath, file)
-          const stats = fs.statSync(filePath)
-          if (stats.isDirectory()) {
-            traverseFolders(filePath)
-          } else {
-            loadMods(filePath, mods)
-          }
-        })
-      }
-
-      traverseFolders(folderpath)
-
-      mods.main.push(main)
-
-      return {
-        type: 'success',
-        message: mods
-      }
-    } catch (error) {
-      return {
-        type: 'error',
-        message: error
-      }
+  ctx.on('stardew-valley/plugin-loaded', (updateMods, data) => {
+    if (updateMods){
+      mods.main.push(...data.main)
+      ctx.emit('stardew-valley/plugin-reload-mods', mods)
     }
-  }
+    ctx.setTimeout(() => {
+      ctx.emit('stardew-valley/plugin-return-mods', mods)
+    }, 1000)
+  })
 
-
-
-  const modpath = path.resolve(__dirname,'../../../data') // mod加载系统
-  if (!fs.existsSync(`${modpath}/mods`)){
-    fs.mkdirSync(`${modpath}/mods`)
-  }
-  if (!fs.existsSync(`${modpath}/mods/stardew-valley`)){
-    fs.mkdirSync(`${modpath}/mods/stardew-valley`)
-  }
-  const loadmods = loadModsFolders(`${modpath}/mods/stardew-valley`)
-  if (loadmods.type === 'error'){
-    ctx.logger.error('加载 mods 失败：' + loadmods.message)
-  } else if (loadmods.type === 'success') {
-    var mods = loadmods.message as mods
-  }
-
-
+  ctx.on('stardew-valley/plugin-reload-mods', (rmods) => {
+    mods = rmods
+  })
 
 
 
@@ -112,15 +113,25 @@ export function apply(ctx: Context, cfg: Config) {
     id: 'unsigned',
     owner_id: 'unsigned',
     crop_id: 'string',
+    lastWateringDate: 'timestamp',
     date: 'timestamp',
     location: 'unsigned'
   },{
     primary: ['id'],
     autoInc: true
   })
+  ctx.model.extend('stardew_valley_player',{ // 玩家表
+    id: 'unsigned',
+    endurance: 'json',
+    hunger: 'json',
+    tool: 'json',
+    armor: 'json'
+  }, {
+    primary: ['id'],
+    autoInc: false
+  })
 
   command(ctx, cfg, mods)
-  events(ctx, cfg, mods)
-
+  action(ctx)
 
 }
